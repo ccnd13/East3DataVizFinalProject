@@ -8,44 +8,66 @@
 #
 
 library(shiny)
+library(sf)
+library(tidyverse)
+library(leaflet)
+
+# setwd("C:\\Users\\msisk1\\Documents\\GIT\\Teaching\\--Data-Viz-2021-Fall\\Week04\\LiveSession\\East_Demo")
+
+
+elections <- st_read("ElectionResultsByState.shp")
+pal <- colorFactor(palette = c("blue","red"), domain = c("D", "R"))
+
+elections.data <- elections %>% st_set_geometry(NULL)
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
-
-    # Application title
-    titlePanel("Old Faithful Geyser Data"),
-
-    # Sidebar with a slider input for number of bins 
-    sidebarLayout(
-        sidebarPanel(
-            sliderInput("bins",
-                        "Number of bins:",
-                        min = 1,
-                        max = 50,
-                        value = 30)
+  
+  # Application title
+  titlePanel("Elections Viewer"),
+  
+  # Sidebar with a slider input for number of bins 
+  sidebarLayout(
+    sidebarPanel(
+      selectInput(inputId = "year",label = "Choose a Year",choices = names(elections[10:67]%>%st_set_geometry(NULL)))
+    ),
+    
+    # Show a plot of the generated distribution
+    mainPanel(
+      tabsetPanel(
+        tabPanel(title = "AmandaPlot",
+                 plotOutput(outputId = "piePlot")
+                 
+                 
         ),
-
-        # Show a plot of the generated distribution
-        mainPanel(
-           plotOutput("distPlot")
+        tabPanel(title = "CraigPlot",
+                 plotOutput(outputId = "piePlot")
+                 
+                 
+        ),#end tabpanel Pie
+        tabPanel(title = "CesarPlot",
+                 leafletOutput(outputId = "map")
         )
+      )#end tabset
     )
+  )
 )
 
 # Define server logic required to draw a histogram
 server <- function(input, output) {
-
-    output$distPlot <- renderPlot({
-        # generate bins based on input$bins from ui.R
-        x    <- faithful[, 2]
-        bins <- seq(min(x), max(x), length.out = input$bins + 1)
-
-        # draw the histogram with the specified number of bins
-        hist(x, breaks = bins, col = 'darkgray', border = 'white')
-    })
+  elec.subset <- reactive({
+    elections.data[,input$year]
+  })
+  output$piePlot <- renderPlot({
+    print(elections[,input$year])
+    pie(table(elec.subset()))
+  })
+  output$map <- renderLeaflet({
+    leaflet()%>%
+      addTiles()%>%
+      addPolygons(data =elections, color = ~pal(elec.subset()))
+  })
 }
 
 # Run the application 
 shinyApp(ui = ui, server = server)
-
-#test push from Amanda
