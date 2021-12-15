@@ -1,4 +1,5 @@
 library(shiny)
+library(shinyWidgets)
 library(sf)
 library(rsconnect)
 library(leaflet)
@@ -43,24 +44,31 @@ spatial_street_lights <-
     st_as_sf(coords = c("Lon","Lat")) %>% 
     st_set_crs(value = 4326)
 
-df_school_boundaries <-
+spatial_park_locations <- 
+    df_park_locations %>%
+    st_as_sf(coords = c("Lon","Lat")) %>% 
+    st_set_crs(value = 4326)
+
+spatial_school_boundaries <-
     cbind(df_school_boundaries,
           st_centroid(df_school_boundaries$geometry) %>%
               st_coordinates()) %>%
     rename("Lon" = "X", "Lat" = "Y") %>%
     as.data.frame() %>%
-    select(School, SchoolType, Lat, Lon)
+    select(School, SchoolType, Lat, Lon) %>%
+    st_as_sf(coords = c("Lon","Lat")) %>% 
+    st_set_crs(value = 4326)
 
 # Nearby lights to locations
-df_park_locations$Nearby_Lights <-
-    by(df_park_locations,
-       seq_len(nrow(df_park_locations)),
+spatial_park_locations$Nearby_Lights <-
+    by(spatial_park_locations,
+       seq_len(nrow(spatial_park_locations)),
        function(park) nearbyLights(park$Lat, park$Lon, 0.1)) %>%
     as.vector()
 
-df_school_boundaries$Nearby_Lights <-
-    by(df_school_boundaries,
-       seq_len(nrow(df_school_boundaries)),
+spatial_school_boundaries$Nearby_Lights <-
+    by(spatial_school_boundaries,
+       seq_len(nrow(spatial_school_boundaries)),
        function(school) nearbyLights(school$Lat, school$Lon, 0.1)) %>%
     as.vector()
 
@@ -75,7 +83,7 @@ spatial_street_lights$Color <-
         for(i in 1:6) {
             if(row[i]) {return(districtColors[i])}
         }
-        return(NA)
+        return("white")
     }) %>%
     unlist()
 
@@ -85,18 +93,49 @@ df_city_council$Lights <-
                   sparse = FALSE) %>%
     apply(MARGIN = 1, sum)
 
+# Add row for lights without district
+df_city_council <- 
+    df_city_council %>%
+    add_row(Num = "None",
+            Lights = nrow(spatial_street_lights) - sum(df_city_council$Lights))
+
+# Find schools and parks outside defined districts
+spatial_park_locations$InDistrict <- 
+    st_intersects(st_transform(spatial_park_locations, 2163),
+                  st_transform(df_city_council$geometry, 2163),
+                  sparse = FALSE) %>%
+    apply(MARGIN=1, function(row) {
+        for(i in 1:6) {
+            if(row[i]) {return(TRUE)}
+        }
+        return(FALSE)
+    }) %>%
+    unlist()
+
+spatial_school_boundaries$InDistrict <- 
+    st_intersects(st_transform(spatial_school_boundaries, 2163),
+                  st_transform(df_city_council$geometry, 2163),
+                  sparse = FALSE) %>%
+    apply(MARGIN=1, function(row) {
+        for(i in 1:6) {
+            if(row[i]) {return(TRUE)}
+        }
+        return(FALSE)
+    }) %>%
+    unlist()
+
 # Define popup
-df_park_locations$popup <-
-    paste("<b>", df_park_locations$Park_Name, "</b><br>",
-          "Type: ", df_park_locations$Park_Type, "<br>",
-          "Address: ", df_park_locations$Address, "<br>",
-          "Nearby Lights: ", df_park_locations$Nearby_Lights,
+spatial_park_locations$popup <-
+    paste("<b>", spatial_park_locations$Park_Name, "</b><br>",
+          "Type: ", spatial_park_locations$Park_Type, "<br>",
+          "Address: ", spatial_park_locations$Address, "<br>",
+          "Nearby Lights: ", spatial_park_locations$Nearby_Lights,
           sep ="")
 
-df_school_boundaries$popup <-
-    paste("<b>", df_school_boundaries$School, "</b><br>",
-          "Type : ", df_school_boundaries$SchoolType, "<br>",
-          "Nearby Lights: ", df_school_boundaries$Nearby_Lights,
+spatial_school_boundaries$popup <-
+    paste("<b>", spatial_school_boundaries$School, "</b><br>",
+          "Type : ", spatial_school_boundaries$SchoolType, "<br>",
+          "Nearby Lights: ", spatial_school_boundaries$Nearby_Lights,
           sep ="")
 
 df_city_council$popup <-
@@ -109,6 +148,14 @@ df_city_council$popup <-
 # Marker icons
 treeNightIcon <- makeIcon(
     iconUrl = "icons/tree-night.png",
+    iconWidth = 40,
+    iconHeight = 40,
+    iconAnchorX = 20,
+    iconAnchorY = 0
+)
+
+treeErrorIcon <- makeIcon(
+    iconUrl = "icons/error-tree.png",
     iconWidth = 40,
     iconHeight = 40,
     iconAnchorX = 20,
@@ -138,7 +185,7 @@ ui <- fluidPage(
                     mainPanel(
                         leafletOutput("markersMap",
                                       height = "80vh"),
-                        width = 11
+                        width = 12
                     )
                 ),
                 tabPanel(
@@ -146,7 +193,13 @@ ui <- fluidPage(
                     mainPanel(
                         leafletOutput("districtsMap",
                                       height = "80vh"),
-                        width = 11
+                        width = 8
+                    ),
+                    sidebarPanel(
+                        plotOutput("districtsBarplot",
+                                   height = "80vh"),
+                        width = 4,
+                        tags$style(".well {background-color:#FFFFFF;}")
                     )
                 )
     )
@@ -162,13 +215,13 @@ server <- function(input, output) {
             addCircles(data = spatial_street_lights,
                        color = "wheat",
                        stroke = 0,
-                       fillOpacity = 0.15,
+                       fillOpacity = 0.2,
                        radius = 30) %>%
-            addMarkers(data = df_park_locations,
+            addMarkers(data = spatial_park_locations,
                        group = "Parks",
                        icon = treeNightIcon,
                        popup = ~popup) %>%
-            addMarkers(data = df_school_boundaries,
+            addMarkers(data = spatial_school_boundaries,
                        group = "Schools",
                        icon = schoolNightIcon,
                        popup = ~popup) %>%
@@ -201,6 +254,15 @@ server <- function(input, output) {
                         fillOpacity = 0.1,
                         stroke = FALSE,
                         popup = ~popup) %>%
+            addMarkers(data = filter(spatial_park_locations,
+                                     InDistrict == FALSE),
+                       icon = treeErrorIcon,
+                       popup = ~popup) %>%
+#            No cases of schools outside boundaries            
+#            addMarkers(data = filter(spatial_school_boundaries,
+#                                     InDistrict == FALSE),
+#                       icon = errorSchoolIcon,
+#                       popup = ~popup) %>%
             setMaxBounds(lng1 = -86.45, # left
                          lat1 = 41.8, # up
                          lng2 = -86.1, # right
@@ -212,8 +274,20 @@ server <- function(input, output) {
                 })
             }")
     })
+    output$districtsBarplot <- renderPlot({
+        ggplot(df_city_council,
+               aes(y = Lights,
+                   x = Num)) +
+            geom_bar(stat = "identity",
+                     fill = c(districtColors, "#858585"),
+                     color = "#090909") +
+            labs(x="District") +
+            theme_bw() +
+            theme(panel.grid.minor = element_blank(),
+                  panel.grid.major = element_blank())
+    })
 }
 
-# Run the application 
+# Run the application
 shinyApp(ui = ui, server = server)
 # deployApp('../East3_FinalProject')
